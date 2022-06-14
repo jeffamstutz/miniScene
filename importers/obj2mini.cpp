@@ -157,8 +157,8 @@ namespace mini {
 
       if (materials.empty())
         // throw std::runtime_error("could not parse materials ...");
-        std::cout << TERM_COLOR_RED << "WARNING: NO MATERIALS (could not find/parse mtl file!?)" << TERM_COLOR_DEFAULT << std::endl;
-      
+        std::cout << MINI_COLOR_RED << "WARNING: NO MATERIALS (could not find/parse mtl file!?)" << MINI_COLOR_DEFAULT << std::endl;
+
       std::vector<Material::SP> baseMaterials;
       for (auto &objMat : materials) {
         Material::SP baseMaterial = std::make_shared<Material>();

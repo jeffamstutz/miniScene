@@ -24,6 +24,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(MINI_BUILD_IMPORTERS "Build Importers? (needs more dependencies)" OFF)
 option(MINI_IMPORT_OWL "Import OWL from submodules? (needs more dependencies)" OFF)
 
+if (MINI_BUILD_IMPORTERS AND NOT MINI_IMPORT_OWL)
+  message(FATAL_ERROR "MINI_BUILD_IMPORTERS requires MINI_IMPORT_OWL to be enabled")
+endif()
+
 if(${CMAKE_VERSION} VERSION_GREATER_EQUAL 3.18)
   cmake_policy(SET CMP0104 NEW)
 endif()
@@ -61,9 +65,6 @@ endif()
 # general cmake project configs
 # ------------------------------------------------------------------
 include(cmake/configure_build_type.cmake)
-if (MINI_BUILD_IMPORTERS)
-include(cmake/FindOpenEXR.cmake)
-endif()
 
 # ------------------------------------------------------------------
 # owl:
@@ -83,30 +84,7 @@ else()
     INTERFACE
     submodules/owl/owl/include/
     )
-  if (MINI_BUILD_IMPORTERS)
-    add_subdirectory(submodules/owl/3rdParty/stb_image EXCLUDE_FROM_ALL)
-    target_link_libraries(miniScene
-      mini_owl_common
-      PUBLIC
-      stb_image
-  )
-  endif()
-endif()
-
-# ------------------------------------------------------------------
-# pbrtParser
-# ------------------------------------------------------------------
-if (MINI_BUILD_IMPORTERS)
-  add_subdirectory(submodules/pbrt-parser EXCLUDE_FROM_ALL)
-  message(STATUS "pbrtParser configured")
-endif()
-
-# ------------------------------------------------------------------
-# disney ptex for importer
-# ------------------------------------------------------------------
-if (MINI_BUILD_IMPORTERS)
-  add_subdirectory(submodules/ptex EXCLUDE_FROM_ALL)
-  message(STATUS "PTex configured")
+  add_subdirectory(submodules/owl/3rdParty/stb_image EXCLUDE_FROM_ALL)
 endif()
 
 # ------------------------------------------------------------------
@@ -121,7 +99,9 @@ if (MINI_BUILD_IMPORTERS)
   add_subdirectory(importers)
   # add this as a dependecy, to force its building even though the
   # pbrtparser is includedvia EXCLUDE_FROM_ALL
-  add_dependencies(pbf2mini pbrt2pbf)
+  if (TARGET pbf2mini)
+    add_dependencies(pbf2mini pbrt2pbf)
+  endif()
 endif()
 
 # ------------------------------------------------------------------
