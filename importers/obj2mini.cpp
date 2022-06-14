@@ -31,19 +31,19 @@ namespace std {
   {
     if (a.vertex_index < b.vertex_index) return true;
     if (a.vertex_index > b.vertex_index) return false;
-    
+
     if (a.normal_index < b.normal_index) return true;
     if (a.normal_index > b.normal_index) return false;
-    
+
     if (a.texcoord_index < b.texcoord_index) return true;
     if (a.texcoord_index > b.texcoord_index) return false;
-    
+
     return false;
   }
 }
 
 namespace mini {
-    
+
     /*! find vertex with given position, normal, texcoord, and return
       its vertex ID, or, if it doesn't exit, add it to the mesh, and
       its just-created index */
@@ -58,7 +58,7 @@ namespace mini {
       const vec3f *vertex_array   = (const vec3f*)attributes.vertices.data();
       const vec3f *normal_array   = (const vec3f*)attributes.normals.data();
       const vec2f *texcoord_array = (const vec2f*)attributes.texcoords.data();
-    
+
       int newID = (int)mesh->vertices.size();
       knownVertices[idx] = newID;
 
@@ -71,7 +71,7 @@ namespace mini {
         while (mesh->texcoords.size() < mesh->vertices.size())
           mesh->texcoords.push_back(texcoord_array[idx.texcoord_index]);
       }
-    
+
       return newID;
     }
 
@@ -84,7 +84,7 @@ namespace mini {
     {
       if (inFileName == "")
         return nullptr;
-    
+
       if (knownTextures.find(inFileName) != knownTextures.end())
         return knownTextures[inFileName];
 
@@ -116,18 +116,18 @@ namespace mini {
 
         /* iw - actually, it seems that stbi loads the pictures
            mirrored along the y axis - mirror them here */
-      
+
         STBI_FREE(image);
       } else {
-        std::cout << OWL_TERMINAL_RED
+        std::cout << MINI_COLOR_RED
                   << "Could not load texture from " << fileName << "!"
-                  << OWL_TERMINAL_DEFAULT << std::endl;
+                  << MINI_COLOR_DEFAULT << std::endl;
       }
-    
+
       knownTextures[inFileName] = texture;
       return texture;
     }
-  
+
     Scene::SP loadOBJ(const std::string &objFile)
     {
       Scene::SP scene = std::make_shared<Scene>();
@@ -135,7 +135,7 @@ namespace mini {
       scene->instances.push_back(std::make_shared<Instance>(model));
       const std::string modelDir
         = objFile.substr(0,objFile.rfind('/')+1);
-    
+
       tinyobj::attrib_t attributes;
       std::vector<tinyobj::shape_t> shapes;
       std::vector<tinyobj::material_t> materials;
@@ -179,22 +179,22 @@ namespace mini {
 
       std::map<std::pair<Material::SP,Texture::SP>,Material::SP>
         texturedMaterials;
-      
+
       std::cout << "Done loading obj file - found "
                 << shapes.size() << " shapes with "
                 << materials.size() << " materials" << std::endl;
-      
+
       std::map<std::string,Texture::SP> knownTextures;
       for (int shapeID=0;shapeID<(int)shapes.size();shapeID++) {
         tinyobj::shape_t &shape = shapes[shapeID];
 
         Mesh::SP mesh = std::make_shared<Mesh>();
-        
+
         std::set<int> materialIDs;
         for (auto faceMatID : shape.mesh.material_ids)
           materialIDs.insert(faceMatID);
-      
-      
+
+
         for (int materialID : materialIDs) {
           std::map<tinyobj::index_t,int> knownVertices;
           Mesh::SP mesh = std::make_shared<Mesh>();
@@ -202,7 +202,7 @@ namespace mini {
           //   = (materialID < ourMaterials.size())
           //   ? ourMaterials[materialID]
           //   : dummyMaterial;
-          
+
           for (size_t faceID=0;faceID<shape.mesh.material_ids.size();faceID++) {
             if (shape.mesh.material_ids[faceID] != materialID) continue;
             if (shape.mesh.num_face_vertices[faceID] != 3)
@@ -210,7 +210,7 @@ namespace mini {
             tinyobj::index_t idx0 = shape.mesh.indices[3*faceID+0];
             tinyobj::index_t idx1 = shape.mesh.indices[3*faceID+1];
             tinyobj::index_t idx2 = shape.mesh.indices[3*faceID+2];
-          
+
             vec3i idx(addVertex(mesh, attributes, idx0, knownVertices),
                       addVertex(mesh, attributes, idx1, knownVertices),
                       addVertex(mesh, attributes, idx2, knownVertices));
@@ -227,7 +227,7 @@ namespace mini {
             = (materialID < materials.size())
             ? baseMaterials[materialID]
             : dummyMaterial;
-                
+
           std::pair<Material::SP,Texture::SP> tuple = { baseMaterial,diffuseTexture };
           if (texturedMaterials.find(tuple) == texturedMaterials.end()) {
             mesh->material = std::make_shared<Material>();
@@ -236,7 +236,7 @@ namespace mini {
             texturedMaterials[tuple] = mesh->material;
           } else
             mesh->material = texturedMaterials[tuple];
-          
+
           if (mesh->vertices.empty())
             /* ignore this mesh */;
           else {
@@ -264,7 +264,7 @@ int main(int ac, char **av)
 {
   std::string inFileName = "";
   std::string outFileName = "";
-    
+
   for (int i=1;i<ac;i++) {
     const std::string arg = av[i];
     if (arg == "-o") {
@@ -274,22 +274,22 @@ int main(int ac, char **av)
     else
       usage("unknown cmd line arg '"+arg+"'");
   }
-    
+
   if (inFileName.empty()) usage("no input file name specified");
   if (outFileName.empty()) usage("no output file name base specified");
 
-  std::cout << OWL_TERMINAL_BLUE
+  std::cout << MINI_COLOR_BLUE
             << "loading OBJ model from " << inFileName
-            << OWL_TERMINAL_DEFAULT << std::endl;
+            << MINI_COLOR_DEFAULT << std::endl;
 
   mini::Scene::SP scene = mini::loadOBJ(inFileName);
-    
-  std::cout << OWL_TERMINAL_DEFAULT
+
+  std::cout << MINI_COLOR_DEFAULT
             << "done importing; saving to " << outFileName
-            << OWL_TERMINAL_DEFAULT << std::endl;
+            << MINI_COLOR_DEFAULT << std::endl;
   scene->save(outFileName);
-  std::cout << OWL_TERMINAL_LIGHT_GREEN
+  std::cout << MINI_COLOR_LIGHT_GREEN
             << "scene saved"
-            << OWL_TERMINAL_DEFAULT << std::endl;
+            << MINI_COLOR_DEFAULT << std::endl;
   return 0;
 }
