@@ -134,5 +134,11 @@ if (TARGET owl::owl)
   add_subdirectory(viewer)
 endif()
 
-
+# -----------------------------------------------------------------------------
+# an ANARI based viewer for trying out with various ANARI backends
+# -----------------------------------------------------------------------------
+find_package(anari 0.3.0)
+if (TARGET anari::anari)
+  add_subdirectory(anari)
+endif()
 
