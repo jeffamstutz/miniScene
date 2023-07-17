@@ -4,7 +4,6 @@
 #include "match3D/match3D.h"
 // anari
 #include <anari/anari_cpp.hpp>
-#include <anari/type_utility.h>
 // miniScene
 #include "miniScene/Scene.h"
 // std
@@ -48,7 +47,7 @@ static void statusFunc(const void *userData, ANARIDevice device,
                        ANARIObject source, ANARIDataType sourceType,
                        ANARIStatusSeverity severity, ANARIStatusCode code,
                        const char *message) {
-  bool verbose = true; // userData ? *(const bool *)userData : false;
+  bool verbose = false; // userData ? *(const bool *)userData : false;
   if (severity == ANARI_SEVERITY_FATAL_ERROR)
     fprintf(stderr, "[ANARI][FATAL] %s\n", message);
   else if (severity == ANARI_SEVERITY_ERROR)
@@ -89,10 +88,9 @@ static anari::Sampler makeAnariImageSampler(anari::Device device,
 
   auto numTexels = mTexture->size.x * mTexture->size.y;
 
-  auto array = anariNewArray2D(device, mTexture->data.data(), noDelete, nullptr,
-                               texelType, mTexture->size.x, mTexture->size.y);
-
-  anari::setAndReleaseParameter(device, aSampler, "image", array);
+  anari::setParameterArray2D(device, aSampler, "image", texelType,
+                             mTexture->data.data(), mTexture->size.x,
+                             mTexture->size.y);
   anari::setParameter(device, aSampler, "filter",
                       mTexture->filterMode ==
                               mini::Texture::FilterMode::FILTER_BILINEAR
@@ -114,11 +112,17 @@ static anari::Material makeAnariMaterial(anari::Device device,
   anari::setParameter(device, aMaterial, "transmission",
                       mMaterial->transmission);
   anari::setParameter(device, aMaterial, "ior", mMaterial->ior);
+  anari::setParameter(device, aMaterial, "alphaMode", "blend");
 
   if (mMaterial->colorTexture) {
     auto aSampler = makeAnariImageSampler(device, mMaterial->colorTexture);
     if (aSampler)
       anari::setAndReleaseParameter(device, aMaterial, "baseColor", aSampler);
+  }
+  if (mMaterial->alphaTexture) {
+    auto aSampler = makeAnariImageSampler(device, mMaterial->alphaTexture);
+    if (aSampler)
+      anari::setAndReleaseParameter(device, aMaterial, "opacity", aSampler);
   }
   anari::commitParameters(device, aMaterial);
   return aMaterial;
@@ -127,25 +131,19 @@ static anari::Material makeAnariMaterial(anari::Device device,
 static anari::Geometry makeAnariGeometry(anari::Device device,
                                          mini::Mesh::SP mMesh) {
   auto aGeometry = anari::newObject<anari::Geometry>(device, "triangle");
-  anari::setAndReleaseParameter(
-      device, aGeometry, "primitive.index",
-      anariNewArray1D(device, mMesh->indices.data(), noDelete, nullptr,
-                      ANARI_UINT32_VEC3, mMesh->indices.size()));
-  anari::setAndReleaseParameter(
-      device, aGeometry, "vertex.position",
-      anari::newArray1D(device, mMesh->vertices.data(), noDelete, nullptr,
-                        mMesh->vertices.size()));
+  anari::setParameterArray1D(device, aGeometry, "primitive.index",
+                             ANARI_UINT32_VEC3, mMesh->indices.data(),
+                             mMesh->indices.size());
+  anari::setParameterArray1D(device, aGeometry, "vertex.position",
+                             mMesh->vertices.data(), mMesh->vertices.size());
   if (!mMesh->normals.empty()) {
-    anari::setAndReleaseParameter(
-        device, aGeometry, "vertex.normal",
-        anari::newArray1D(device, mMesh->normals.data(), noDelete, nullptr,
-                          mMesh->normals.size()));
+    anari::setParameterArray1D(device, aGeometry, "vertex.normal",
+                               mMesh->normals.data(), mMesh->normals.size());
   }
   if (!mMesh->texcoords.empty()) {
-    anari::setAndReleaseParameter(
-        device, aGeometry, "vertex.attribute0",
-        anari::newArray1D(device, mMesh->texcoords.data(), noDelete, nullptr,
-                          mMesh->texcoords.size()));
+    anari::setParameterArray1D(device, aGeometry, "vertex.attribute0",
+                               mMesh->texcoords.data(),
+                               mMesh->texcoords.size());
   }
   anari::commitParameters(device, aGeometry);
   return aGeometry;
@@ -176,9 +174,8 @@ static anari::Instance makeAnariInstance(anari::Device device,
   }
 
   if (!aSurfaces.empty()) {
-    anari::setAndReleaseParameter(
-        device, aGroup, "surface",
-        anari::newArray1D(device, aSurfaces.data(), aSurfaces.size()));
+    anari::setParameterArray1D(device, aGroup, "surface", aSurfaces.data(),
+                               aSurfaces.size());
   }
 
   anari::commitParameters(device, aGroup);
@@ -211,9 +208,8 @@ static anari::World createAnariWorldFromScene(anari::Device device,
   }
 
   if (!aInstances.empty()) {
-    anari::setAndReleaseParameter(
-        device, aWorld, "instance",
-        anari::newArray1D(device, aInstances.data(), aInstances.size()));
+    anari::setParameterArray1D(device, aWorld, "instance", aInstances.data(),
+                               aInstances.size());
   }
 
   for (auto i : aInstances)
@@ -302,6 +298,7 @@ void ExampleApp::setup() {
 
   anari::setParameter(m_device, m_renderer, "background",
                       float4(0.2f, 0.2f, 0.2f, 1.f));
+  anari::setParameter(m_device, m_renderer, "ambientRadiance", 1.f);
   anari::commitParameters(m_device, m_renderer);
 
   // ImGui //

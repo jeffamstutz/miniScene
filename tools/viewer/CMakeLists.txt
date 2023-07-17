@@ -17,10 +17,10 @@
 embed_ptx(
   OUTPUT_TARGET
   miniViewer-deviceCode
-  
+
   PTX_LINK_LIBRARIES
   owl::owl
-  
+
   SOURCES
   deviceCode.cu
   )
