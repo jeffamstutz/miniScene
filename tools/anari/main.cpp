@@ -119,6 +119,10 @@ static void initializeANARI() {
   g_device = dev;
 }
 
+static void noDelete(const void * /*user_data*/, const void * /*ptr*/) {
+  // no-op
+}
+
 static anari::Sampler makeAnariImageSampler(anari::Device device,
                                             mini::Texture::SP mTexture) {
   if (mTexture->format == mini::Texture::Format::UNDEFINED ||
@@ -137,9 +141,10 @@ static anari::Sampler makeAnariImageSampler(anari::Device device,
 
   auto numTexels = mTexture->size.x * mTexture->size.y;
 
-  anari::setParameterArray2D(device, aSampler, "image", texelType,
-                             mTexture->data.data(), mTexture->size.x,
-                             mTexture->size.y);
+  auto array = anariNewArray2D(device, mTexture->data.data(), noDelete, nullptr,
+                               texelType, mTexture->size.x, mTexture->size.y);
+
+  anari::setAndReleaseParameter(device, aSampler, "image", array);
   anari::setParameter(device, aSampler, "filter",
                       mTexture->filterMode ==
                               mini::Texture::FilterMode::FILTER_BILINEAR
@@ -180,19 +185,25 @@ static anari::Material makeAnariMaterial(anari::Device device,
 static anari::Geometry makeAnariGeometry(anari::Device device,
                                          mini::Mesh::SP mMesh) {
   auto aGeometry = anari::newObject<anari::Geometry>(device, "triangle");
-  anari::setParameterArray1D(device, aGeometry, "primitive.index",
-                             ANARI_UINT32_VEC3, mMesh->indices.data(),
-                             mMesh->indices.size());
-  anari::setParameterArray1D(device, aGeometry, "vertex.position",
-                             mMesh->vertices.data(), mMesh->vertices.size());
+  anari::setAndReleaseParameter(
+      device, aGeometry, "primitive.index",
+      anariNewArray1D(device, mMesh->indices.data(), noDelete, nullptr,
+                      ANARI_UINT32_VEC3, mMesh->indices.size()));
+  anari::setAndReleaseParameter(
+      device, aGeometry, "vertex.position",
+      anari::newArray1D(device, mMesh->vertices.data(), noDelete, nullptr,
+                        mMesh->vertices.size()));
   if (!mMesh->normals.empty()) {
-    anari::setParameterArray1D(device, aGeometry, "vertex.normal",
-                               mMesh->normals.data(), mMesh->normals.size());
+    anari::setAndReleaseParameter(
+        device, aGeometry, "vertex.normal",
+        anari::newArray1D(device, mMesh->normals.data(), noDelete, nullptr,
+                          mMesh->normals.size()));
   }
   if (!mMesh->texcoords.empty()) {
-    anari::setParameterArray1D(device, aGeometry, "vertex.attribute0",
-                               mMesh->texcoords.data(),
-                               mMesh->texcoords.size());
+    anari::setAndReleaseParameter(
+        device, aGeometry, "vertex.attribute0",
+        anari::newArray1D(device, mMesh->texcoords.data(), noDelete, nullptr,
+                          mMesh->texcoords.size()));
   }
   anari::commitParameters(device, aGeometry);
   return aGeometry;
@@ -271,6 +282,7 @@ struct AppState {
   manipulators::Orbit manipulator;
   anari::Device device{nullptr};
   anari::World world{nullptr};
+  mini::Scene::SP scene;
 };
 
 class Application : public match3D::DockingApplication {
@@ -295,8 +307,8 @@ public:
     // Setup scene //
 
     printf("loading file '%s'\n", g_filename.c_str());
-    auto scene = mini::Scene::load(g_filename);
-    m_state.world = createAnariWorldFromScene(m_state.device, scene);
+    m_state.scene = mini::Scene::load(g_filename);
+    m_state.world = createAnariWorldFromScene(m_state.device, m_state.scene);
 
     // ImGui //
 
