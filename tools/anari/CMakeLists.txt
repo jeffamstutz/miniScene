@@ -14,10 +14,8 @@
 # limitations under the License.                                           #
 # ======================================================================== #
 
-include(get_match3D.cmake)
-find_package(match3D REQUIRED)
+set(CMAKE_CXX_STANDARD 14)
 
 project(miniAnari)
-
-add_executable(${PROJECT_NAME} main.cpp Orbit.cpp)
-target_link_libraries(${PROJECT_NAME} anari::anari match3D::match3D miniScene)
+add_executable(${PROJECT_NAME} main.cpp)
+target_link_libraries(${PROJECT_NAME} anari::anari_viewer miniScene)

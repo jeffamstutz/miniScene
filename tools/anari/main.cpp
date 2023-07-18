@@ -1,37 +1,52 @@
-// Copyright 2022 Jefferson Amstutz
-// SPDX-License-Identifier: Apache-2.0
-
-#include "match3D/match3D.h"
-// anari
-#include <anari/anari_cpp.hpp>
+// anari_viewer
+#include "anari_viewer/windows/LightsEditor.h"
+#include "anari_viewer/windows/Viewport.h"
 // miniScene
 #include "miniScene/Scene.h"
 // std
-#include <cstring>
+#include <iostream>
 
-#include "Orbit.h"
+static const bool g_true = true;
+static bool g_verbose = false;
+static bool g_useDefaultLayout = true;
+static bool g_enableDebug = false;
+static std::string g_libraryName = "environment";
+static anari::Library g_debug = nullptr;
+static anari::Device g_device = nullptr;
+static const char *g_traceDir = nullptr;
+static std::string g_filename;
+
+static const char *g_defaultLayout =
+    R"layout(
+[Window][MainDockSpace]
+Pos=0,25
+Size=1920,1174
+Collapsed=0
+
+[Window][Viewport]
+Pos=551,25
+Size=1369,1174
+Collapsed=0
+DockId=0x00000002,0
+
+[Window][Lights Editor]
+Pos=0,25
+Size=549,1174
+Collapsed=0
+DockId=0x00000001,0
+
+[Window][Debug##Default]
+Pos=60,60
+Size=400,400
+Collapsed=0
+
+[Docking][Data]
+DockSpace   ID=0x782A6D6B Window=0xDEDC5B90 Pos=0,25 Size=1920,1174 Split=X Selected=0x13926F0B
+  DockNode  ID=0x00000001 Parent=0x782A6D6B SizeRef=549,1174 Selected=0x5098EBE6
+  DockNode  ID=0x00000002 Parent=0x782A6D6B SizeRef=1369,1174 CentralNode=1 Selected=0x13926F0B
+)layout";
 
 namespace anari {
-
-ANARI_TYPEFOR_SPECIALIZATION(float2, ANARI_FLOAT32_VEC2);
-ANARI_TYPEFOR_SPECIALIZATION(float3, ANARI_FLOAT32_VEC3);
-ANARI_TYPEFOR_SPECIALIZATION(float4, ANARI_FLOAT32_VEC4);
-ANARI_TYPEFOR_SPECIALIZATION(int2, ANARI_INT32_VEC2);
-ANARI_TYPEFOR_SPECIALIZATION(int3, ANARI_INT32_VEC3);
-ANARI_TYPEFOR_SPECIALIZATION(int4, ANARI_INT32_VEC4);
-ANARI_TYPEFOR_SPECIALIZATION(uint2, ANARI_UINT32_VEC2);
-ANARI_TYPEFOR_SPECIALIZATION(uint3, ANARI_UINT32_VEC3);
-ANARI_TYPEFOR_SPECIALIZATION(uint4, ANARI_UINT32_VEC4);
-
-ANARI_TYPEFOR_DEFINITION(float2);
-ANARI_TYPEFOR_DEFINITION(float3);
-ANARI_TYPEFOR_DEFINITION(float4);
-ANARI_TYPEFOR_DEFINITION(int2);
-ANARI_TYPEFOR_DEFINITION(int3);
-ANARI_TYPEFOR_DEFINITION(int4);
-ANARI_TYPEFOR_DEFINITION(uint2);
-ANARI_TYPEFOR_DEFINITION(uint3);
-ANARI_TYPEFOR_DEFINITION(uint4);
 
 ANARI_TYPEFOR_SPECIALIZATION(mini::common::vec2f, ANARI_FLOAT32_VEC2);
 ANARI_TYPEFOR_SPECIALIZATION(mini::common::vec3f, ANARI_FLOAT32_VEC3);
@@ -43,31 +58,65 @@ ANARI_TYPEFOR_DEFINITION(mini::common::vec4f);
 
 } // namespace anari
 
+namespace viewer {
+
 static void statusFunc(const void *userData, ANARIDevice device,
                        ANARIObject source, ANARIDataType sourceType,
                        ANARIStatusSeverity severity, ANARIStatusCode code,
                        const char *message) {
-  bool verbose = false; // userData ? *(const bool *)userData : false;
-  if (severity == ANARI_SEVERITY_FATAL_ERROR)
-    fprintf(stderr, "[ANARI][FATAL] %s\n", message);
-  else if (severity == ANARI_SEVERITY_ERROR)
-    fprintf(stderr, "[ANARI][ERROR] %s\n", message);
+  const bool verbose = userData ? *(const bool *)userData : false;
+  if (severity == ANARI_SEVERITY_FATAL_ERROR) {
+    fprintf(stderr, "[FATAL][%p] %s\n", source, message);
+    std::exit(1);
+  } else if (severity == ANARI_SEVERITY_ERROR)
+    fprintf(stderr, "[ERROR][%p] %s\n", source, message);
   else if (severity == ANARI_SEVERITY_WARNING)
-    fprintf(stderr, "[ANARI][WARN ] %s\n", message);
-
-  if (!verbose)
-    return;
-
-  if (severity == ANARI_SEVERITY_PERFORMANCE_WARNING)
-    fprintf(stderr, "[ANARI][PERF ] %s\n", message);
-  else if (severity == ANARI_SEVERITY_INFO)
-    fprintf(stderr, "[ANARI][INFO ] %s\n", message);
-  else if (severity == ANARI_SEVERITY_DEBUG)
-    fprintf(stderr, "[ANARI][DEBUG] %s\n", message);
+    fprintf(stderr, "[WARN ][%p] %s\n", source, message);
+  else if (verbose && severity == ANARI_SEVERITY_PERFORMANCE_WARNING)
+    fprintf(stderr, "[PERF ][%p] %s\n", source, message);
+  else if (verbose && severity == ANARI_SEVERITY_INFO)
+    fprintf(stderr, "[INFO ][%p] %s\n", source, message);
+  else if (verbose && severity == ANARI_SEVERITY_DEBUG)
+    fprintf(stderr, "[DEBUG][%p] %s\n", source, message);
 }
 
-static void noDelete(const void * /*user_data*/, const void * /*ptr*/) {
-  // no-op
+static void initializeANARI() {
+  auto library =
+      anariLoadLibrary(g_libraryName.c_str(), statusFunc, &g_verbose);
+  if (!library)
+    throw std::runtime_error("Failed to load ANARI library");
+
+  if (g_enableDebug)
+    g_debug = anariLoadLibrary("debug", statusFunc, &g_true);
+
+  anari::Device dev = anariNewDevice(library, "default");
+
+  anari::unloadLibrary(library);
+
+  if (g_enableDebug)
+    anari::setParameter(dev, dev, "glDebug", true);
+
+#ifdef USE_GLES2
+  anari::setParameter(dev, dev, "glAPI", "OpenGL_ES");
+#else
+  anari::setParameter(dev, dev, "glAPI", "OpenGL");
+#endif
+
+  if (g_enableDebug) {
+    anari::Device dbg = anariNewDevice(g_debug, "debug");
+    anari::setParameter(dbg, dbg, "wrappedDevice", dev);
+    if (g_traceDir) {
+      anari::setParameter(dbg, dbg, "traceDir", g_traceDir);
+      anari::setParameter(dbg, dbg, "traceMode", "code");
+    }
+    anari::commitParameters(dbg, dbg);
+    anari::release(dev, dev);
+    dev = dbg;
+  }
+
+  anari::commitParameters(dev, dev);
+
+  g_device = dev;
 }
 
 static anari::Sampler makeAnariImageSampler(anari::Device device,
@@ -190,14 +239,11 @@ static anari::Instance makeAnariInstance(anari::Device device,
 }
 
 static anari::World createAnariWorldFromScene(anari::Device device,
-                                              mini::Scene::SP scene,
-                                              mini::common::box3f &bounds) {
+                                              mini::Scene::SP scene) {
   auto aWorld = anari::newObject<anari::World>(device);
 
   if (!scene)
     return aWorld;
-
-  bounds = scene->getBounds();
 
   std::vector<anari::Instance> aInstances;
 
@@ -219,318 +265,129 @@ static anari::World createAnariWorldFromScene(anari::Device device,
   return aWorld;
 }
 
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
+// Application definition /////////////////////////////////////////////////////
 
-class ExampleApp : public match3D::SimpleApplication {
-public:
-  ExampleApp(std::string filename);
-  ~ExampleApp() override = default;
-
-  void setup() override;
-  void buildUI() override;
-  void drawBackground() override;
-  void teardown() override;
-
-private:
-  void handleInput();
-  void updateCamera();
-  void reshape(int width, int height);
-  void loadScene();
-
-  // Data //
-
-  anari::Device m_device{nullptr};
-  anari::Frame m_frame{nullptr};
-  anari::World m_world{nullptr};
-  anari::Renderer m_renderer{nullptr};
-  anari::Camera m_camera{nullptr};
-
-  float m_duration{0.f};
-
-  std::string m_filename;
-
-  mini::Scene::SP m_scene;
-  mini::common::box3f m_bounds;
-
-  float2 m_previousMouse;
-  bool m_mouseRotating{false};
-  bool m_manipulating{false};
-  Orbit m_arcball;
-
-  GLuint m_framebufferTexture{0};
-  GLuint m_framebufferObject{0};
-  int m_width{1200};
-  int m_height{800};
-  int m_renderWidth{0};
-  int m_renderHeight{0};
+struct AppState {
+  manipulators::Orbit manipulator;
+  anari::Device device{nullptr};
+  anari::World world{nullptr};
 };
 
-// ExampleApp definitions /////////////////////////////////////////////////////
+class Application : public match3D::DockingApplication {
+public:
+  Application() = default;
+  ~Application() override = default;
 
-ExampleApp::ExampleApp(std::string filename) : m_filename(filename) {
-  m_previousMouse = float2(-1, -1);
-}
+  match3D::WindowArray setup() override {
+    ui::init();
 
-void ExampleApp::setup() {
-  // ANARI //
+    // ANARI //
 
-  anari::Library library = anari::loadLibrary("environment", statusFunc);
-  if (!library)
-    throw std::runtime_error("failed to load ANARI library");
+    initializeANARI();
 
-  m_device = anari::newDevice(library, "default");
+    auto device = g_device;
 
-  anari::unloadLibrary(library);
+    if (!device)
+      std::exit(1);
 
-  printf("loading file '%s'\n", m_filename.c_str());
-  m_scene = mini::Scene::load(m_filename);
+    m_state.device = device;
 
-  m_camera = anari::newObject<anari::Camera>(m_device, "perspective");
-  m_renderer = anari::newObject<anari::Renderer>(m_device, "default");
-  m_world = createAnariWorldFromScene(m_device, m_scene, m_bounds);
-  m_frame = anari::newObject<anari::Frame>(m_device);
+    // Setup scene //
 
-  anari::setParameter(m_device, m_frame, "camera", m_camera);
-  anari::setParameter(m_device, m_frame, "renderer", m_renderer);
-  anari::setParameter(m_device, m_frame, "world", m_world);
+    printf("loading file '%s'\n", g_filename.c_str());
+    auto scene = mini::Scene::load(g_filename);
+    m_state.world = createAnariWorldFromScene(m_state.device, scene);
 
-  anari::setParameter(m_device, m_renderer, "background",
-                      float4(0.2f, 0.2f, 0.2f, 1.f));
-  anari::setParameter(m_device, m_renderer, "ambientRadiance", 1.f);
-  anari::commitParameters(m_device, m_renderer);
+    // ImGui //
 
-  // ImGui //
+    ImGuiIO &io = ImGui::GetIO();
+    io.FontGlobalScale = 1.5f;
+    io.IniFilename = nullptr;
 
-  ImGuiIO &io = ImGui::GetIO();
-  io.FontGlobalScale = 1.5f;
-  io.IniFilename = nullptr;
+    if (g_useDefaultLayout)
+      ImGui::LoadIniSettingsFromMemory(g_defaultLayout);
 
-  // OpenGL //
+    auto *viewport = new windows::Viewport(device, "Viewport");
+    viewport->setManipulator(&m_state.manipulator);
+    viewport->setWorld(m_state.world);
+    viewport->resetView();
 
-  // Create a texture
-  glGenTextures(1, &m_framebufferTexture);
-  glBindTexture(GL_TEXTURE_2D, m_framebufferTexture);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, m_width, m_height, 0, GL_RGBA,
-               GL_UNSIGNED_BYTE, 0);
+    auto *leditor = new windows::LightsEditor({device});
+    leditor->setWorlds({m_state.world});
 
-  // Map framebufferTexture (above) to a new OpenGL read/write framebuffer
-  glGenFramebuffers(1, &m_framebufferObject);
-  glBindFramebuffer(GL_FRAMEBUFFER, m_framebufferObject);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                         m_framebufferTexture, 0);
-  glReadBuffer(GL_COLOR_ATTACHMENT0);
+    match3D::WindowArray windows;
+    windows.emplace_back(viewport);
+    windows.emplace_back(leditor);
 
-  // Load scene + final setup //
-
-  float3 bounds[2];
-  std::memcpy(bounds, &m_bounds, sizeof(bounds));
-  printf("\nworld bounds: ({%f, %f, %f}, {%f, %f, %f}\n\n", bounds[0].x,
-         bounds[0].y, bounds[0].z, bounds[1].x, bounds[1].y, bounds[1].z);
-
-  auto center = 0.5f * (bounds[0] + bounds[1]);
-  auto diag = bounds[1] - bounds[0];
-
-  m_arcball =
-      Orbit((bounds[0] + bounds[1]) / 2.f, 1.25f * linalg::length(diag));
-
-  reshape(m_width, m_height);
-  updateCamera();
-  anari::render(m_device, m_frame);
-}
-
-void ExampleApp::buildUI() {
-  if (getWindowSize(m_width, m_height))
-    reshape(m_width, m_height);
-
-  handleInput();
-
-  {
-    ImGuiWindowFlags windowFlags =
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
-
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
-
-    ImGui::Begin("Debug Info", nullptr, windowFlags);
-
-    ImGui::Text("display rate: %.1f FPS", 1.f / getLastFrameLatency());
-    ImGui::Text(" render rate: %.1f FPS", 1.f / m_duration);
-    ImGui::NewLine();
-
-    ImGui::Text("set 'up': ");
-    ImGui::SameLine();
-    if (ImGui::Button("+x")) {
-      m_arcball.setAxis(OrbitAxis::POS_X);
-      updateCamera();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("+y")) {
-      m_arcball.setAxis(OrbitAxis::POS_Y);
-      updateCamera();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("+z")) {
-      m_arcball.setAxis(OrbitAxis::POS_Z);
-      updateCamera();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("-x")) {
-      m_arcball.setAxis(OrbitAxis::NEG_X);
-      updateCamera();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("-y")) {
-      m_arcball.setAxis(OrbitAxis::NEG_Y);
-      updateCamera();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("-z")) {
-      m_arcball.setAxis(OrbitAxis::NEG_Z);
-      updateCamera();
-    }
-
-    ImGui::End();
-  }
-}
-
-void ExampleApp::drawBackground() {
-  int &w = m_width;
-  int &h = m_height;
-
-  if (anari::isReady(m_device, m_frame)) {
-    anari::getProperty(m_device, m_frame, "duration", m_duration);
-
-    auto fb = anari::map<uint32_t>(m_device, m_frame, "channel.color");
-    glBindTexture(GL_TEXTURE_2D, m_framebufferTexture);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, fb.width, fb.height, GL_RGBA,
-                    GL_UNSIGNED_BYTE, fb.data);
-    anari::unmap(m_device, m_frame, "channel.color");
-    anari::render(m_device, m_frame);
+    return windows;
   }
 
-  glBindFramebuffer(GL_READ_FRAMEBUFFER, m_framebufferObject);
-  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+  void buildMainMenuUI() override {
+    if (ImGui::BeginMainMenuBar()) {
+      if (ImGui::BeginMenu("File")) {
+        if (ImGui::MenuItem("print ImGui ini")) {
+          const char *info = ImGui::SaveIniSettingsToMemory();
+          printf("%s\n", info);
+        }
 
-  glClear(GL_COLOR_BUFFER_BIT);
-  glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-}
-
-void ExampleApp::teardown() {
-  anari::wait(m_device, m_frame);
-
-  anari::release(m_device, m_world);
-  anari::release(m_device, m_camera);
-  anari::release(m_device, m_renderer);
-
-  anari::release(m_device, m_frame);
-
-  anari::release(m_device, m_device);
-}
-
-void ExampleApp::handleInput() {
-  ImGuiIO &io = ImGui::GetIO();
-
-  if (io.WantCaptureMouse)
-    return;
-
-  const bool leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-  const bool rightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-  const bool middleDown = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-
-  const bool anyDown = leftDown || rightDown || middleDown;
-
-  if (!anyDown) {
-    m_manipulating = false;
-    m_previousMouse = float2(-1, -1);
-  } else if (!m_manipulating)
-    m_manipulating = true;
-
-  if (m_mouseRotating && !leftDown)
-    m_mouseRotating = false;
-
-  if (m_manipulating) {
-    float2 position;
-    std::memcpy(&position, &io.MousePos, sizeof(position));
-
-    const float2 mouse = float2(position.x, position.y);
-
-    if (anyDown && m_previousMouse != float2(-1, -1)) {
-      const float2 prev = m_previousMouse;
-
-      const float2 mouseFrom = prev * 2.f / float2(m_width, m_height);
-      const float2 mouseTo = mouse * 2.f / float2(m_width, m_height);
-
-      const float2 mouseDelta = mouseFrom - mouseTo;
-
-      if (mouseDelta != float2(0.f, 0.f)) {
-        if (leftDown) {
-          if (!m_mouseRotating) {
-            m_arcball.startNewRotation();
-            m_mouseRotating = true;
-          }
-
-          m_arcball.rotate(mouseDelta);
-        } else if (rightDown)
-          m_arcball.zoom(mouseDelta.y);
-        else if (middleDown)
-          m_arcball.pan(mouseDelta);
-
-        updateCamera();
+        ImGui::EndMenu();
       }
+
+      ImGui::EndMainMenuBar();
     }
+  }
 
-    m_previousMouse = mouse;
+  void teardown() override {
+    anari::release(m_state.device, m_state.world);
+    anari::release(m_state.device, m_state.device);
+    ui::shutdown();
+  }
+
+private:
+  AppState m_state;
+};
+
+} // namespace viewer
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+static void printUsage() {
+  std::cout << "./anariViewer [{--help|-h}]\n"
+            << "   [{--verbose|-v}] [{--debug|-g}]\n"
+            << "   [{--library|-l} <ANARI library>]\n"
+            << "   [{--trace|-t} <directory>]\n";
+}
+
+static void parseCommandLine(int argc, char *argv[]) {
+  for (int i = 1; i < argc; i++) {
+    std::string arg = argv[i];
+    if (arg == "-v" || arg == "--verbose")
+      g_verbose = true;
+    if (arg == "--help" || arg == "-h") {
+      printUsage();
+      std::exit(0);
+    } else if (arg == "--noDefaultLayout")
+      g_useDefaultLayout = false;
+    else if (arg == "-l" || arg == "--library")
+      g_libraryName = argv[++i];
+    else if (arg == "--debug" || arg == "-g")
+      g_enableDebug = true;
+    else if (arg == "--trace" || arg == "-t")
+      g_traceDir = argv[++i];
+    else
+      g_filename = std::move(arg);
   }
 }
 
-void ExampleApp::updateCamera() {
-  auto eye = m_arcball.eye();
-  auto dir = m_arcball.dir();
-  auto up = m_arcball.up();
-
-  anari::setParameter(m_device, m_camera, "position", m_arcball.eye());
-  anari::setParameter(m_device, m_camera, "direction", m_arcball.dir());
-  anari::setParameter(m_device, m_camera, "up", m_arcball.up());
-  anari::commitParameters(m_device, m_camera);
-}
-
-void ExampleApp::reshape(int width, int height) {
-  glViewport(0, 0, width, height);
-
-  glBindTexture(GL_TEXTURE_2D, m_framebufferTexture);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGBA,
-               GL_FLOAT, 0);
-
-  uint32_t size[2] = {uint32_t(width), uint32_t(height)};
-  anari::setParameter(m_device, m_frame, "size", size);
-  anari::setParameter(m_device, m_frame, "channel.color",
-                      ANARI_UFIXED8_RGBA_SRGB);
-  anari::setParameter(m_device, m_frame, "renderer", m_renderer);
-  anari::setParameter(m_device, m_frame, "camera", m_camera);
-  anari::commitParameters(m_device, m_frame);
-
-  anari::setParameter(m_device, m_camera, "aspect", width / float(height));
-  anari::commitParameters(m_device, m_camera);
-
-  m_width = width;
-  m_height = height;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-int main(int argc, const char *argv[]) {
-  if (argc < 2) {
-    printf("usage: ./miniAnari [.mini file]\n");
-    return 0;
+int main(int argc, char *argv[]) {
+  parseCommandLine(argc, argv);
+  if (g_filename.empty()) {
+    printf("ERROR: no .mini file provided\n");
+    std::exit(1);
   }
-
-  ExampleApp app(argv[1]);
-  app.run(1200, 800, "miniScene ANARI Viewer");
+  viewer::Application app;
+  app.run(1920, 1200, "ANARI miniScene Viewer");
+  return 0;
 }
